@@ -39,7 +39,7 @@ class GameScreen(QWidget):
         self.SCREEN_WIDTH = geometry.width()
         self.SCREEN_HEIGHT = geometry.height()
         
-        # --- Global Styles ---
+        #Global stules
         self.setStyleSheet("""
             QWidget {
                 background-color: transparent;
@@ -58,7 +58,7 @@ class GameScreen(QWidget):
             }
         """)
 
-        # --- Default game settings ---
+        #Board constant setup
         self.selectedSide = 5
         self.selectedRadius = self.standardised(60)
         self.selectedColors = {
@@ -67,12 +67,13 @@ class GameScreen(QWidget):
             "empty": QColor("#1E283C"),
             "border": QColor("#00C8FF"),
         }
+        #Placeholder vars
         self.selectedAiMoveDelay = 500
         self.numComputers = 0
         self.mode = "Yavalath"
         self.difficulty = "Easy"
 
-        # --- Load from gameSettings ---
+        #Load bot from settingsScreen
         self.selectedSide = gameSettings.get("side", self.selectedSide)
         self.selectedRadius = gameSettings.get("radius", self.selectedRadius)
         self.selectedColors = gameSettings.get("colors", self.selectedColors)
@@ -83,7 +84,7 @@ class GameScreen(QWidget):
         self.mode = gameSettings.get("mode", self.mode)
         self.difficulty = gameSettings.get("difficulty", self.difficulty)
 
-        # --- Minimax config ---
+        #Minimax config
         self.minimaxConfig = self.DIFFICULTY_SETTINGS.get(self.difficulty, self.DIFFICULTY_SETTINGS["Easy"])
         if self.selectedAiMoveDelay is None:
             self.selectedAiMoveDelay = 100
@@ -92,23 +93,27 @@ class GameScreen(QWidget):
         self.player1Score = 0
         self.player2Score = 0
 
-        # --- Background ---
+        #Background
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), Qt.black)
         self.setPalette(palette)
 
+        #True background not the one used in SettingScreen
         self.backgroundFrame = QFrame(self)
         self.backgroundFrame.setStyleSheet("background-color: black;")
         self.backgroundFrame.setGeometry(self.rect())
         self.backgroundFrame.lower()
 
+        #small function to resize background with the screen.
         def resizeEventWithBg(event):
             self.backgroundFrame.setGeometry(self.rect())
+            #doesn't break resizing for some reason (Only thing i could to to help)
             super(GameScreen, self).resizeEvent(event)
+
         self.resizeEvent = resizeEventWithBg
 
-        # --- Main Vertical Layout ---
+        #Main vertical layout
         mainVerticalLayout = QVBoxLayout(self)
         mainVerticalLayout.setContentsMargins(
             self.standardised(30), self.standardised(30),
@@ -116,7 +121,7 @@ class GameScreen(QWidget):
         )
         mainVerticalLayout.setSpacing(self.standardised(15))
 
-        # --- Title ---
+        #Title
         self.titleContainer = QFrame(self)
         borderRadius = self.standardised(20)
         border = 2
@@ -128,6 +133,7 @@ class GameScreen(QWidget):
         titleLayout = QVBoxLayout(self.titleContainer)
         titleLayout.setContentsMargins(0,0,0,0)
 
+        #Adaptive gamemode label
         if self.mode == "Yavalath":
             self.titleLabel = QLabel("Yavalath", self.titleContainer)
         elif self.mode == "Pentalath":
@@ -142,7 +148,7 @@ class GameScreen(QWidget):
 
         mainVerticalLayout.addWidget(self.titleContainer)
 
-        # --- Main HBox Layout ---
+        #Main HBox layout
         mainLayout = QHBoxLayout()
         mainLayout.setContentsMargins(
             self.standardised(30), self.standardised(30),
@@ -150,11 +156,12 @@ class GameScreen(QWidget):
         )
         mainLayout.setSpacing(self.standardised(40))
 
+        #setup timer
         self.freezeTimer = QTimer(self)
         self.freezeTimer.setInterval(500)
         self.freezeTimer.timeout.connect(self._freezeTimerTick)
 
-        # --- Left Container ---
+        #Left container
         self.leftContainer = QFrame()
         self.leftContainer.setObjectName("LeftContainer")
         self.leftContainer.setFixedWidth(self.standardised(440))
@@ -172,12 +179,14 @@ class GameScreen(QWidget):
         )
         self.leftLayout.setSpacing(self.standardised(25))
 
-        # Star Logo
+        #Star logo
         self.starLogoWidgetSize = self.standardised(350)
         self.starLogo = StarLogoWidget(self.leftContainer)
         self.starLogo.setFixedSize(self.starLogoWidgetSize, self.starLogoWidgetSize)
         self.leftLayout.addWidget(self.starLogo, alignment=Qt.AlignCenter)
 
+        #Only difference between the two timers is that they are assigned to different variables
+        #Timer creation
         self.player1Timer = PlayerTimer(
             duration=self.moveTimerDuration,
             borderColor=QColor("#222222"),
@@ -186,7 +195,8 @@ class GameScreen(QWidget):
         )
         self.player1Timer.setStyleSheet(f"border: none")
         self.leftLayout.addWidget(self.player1Timer, alignment=Qt.AlignCenter)
-
+        
+        #Timer 2 creation
         self.player2Timer = PlayerTimer(
             duration=self.moveTimerDuration,
             borderColor=QColor("#222222"),
@@ -196,12 +206,14 @@ class GameScreen(QWidget):
         self.player2Timer.setStyleSheet("border: none")
         self.leftLayout.addWidget(self.player2Timer, alignment=Qt.AlignCenter)
 
+        #Player 1 label
         self.player1Label = QLabel()
         self.player1Label.setAlignment(Qt.AlignCenter)
         self.player1Label.setFont(QFont("Arial", self.standardised(16), QFont.Bold))
         self.player1Label.setStyleSheet("border: none;")
         self.leftLayout.addWidget(self.player1Label)
 
+        #Player 2 label
         self.player2Label = QLabel()
         self.player2Label.setAlignment(Qt.AlignCenter)
         self.player2Label.setFont(QFont("Arial", self.standardised(16), QFont.Bold))
@@ -210,7 +222,7 @@ class GameScreen(QWidget):
 
         self.leftLayout.addSpacing(self.standardised(30))
 
-        # --- Message Log Container Box ---
+        #Message container box setup and creation
         self.messageLogContainer = QFrame(self.leftContainer)
         self.messageLogContainer.setStyleSheet(f"""
             background-color: #1E1E1E;
@@ -220,7 +232,7 @@ class GameScreen(QWidget):
         self.messageLogContainer.setFixedHeight(self.standardised(300))
         self.leftLayout.addWidget(self.messageLogContainer)
 
-        # Layout inside the container
+        #Layout inside container
         logLayout = QVBoxLayout(self.messageLogContainer)
         logLayout.setContentsMargins(self.standardised(10), self.standardised(10),
                                     self.standardised(10), self.standardised(10))
@@ -236,6 +248,7 @@ class GameScreen(QWidget):
         buttonsContainer.setSpacing(self.standardised(40))
         buttonsContainer.setContentsMargins(0,0,0,0)
 
+        #PLAY AGAIN
         self.playAgainButton = TextButton("Play Again", checkable=False)
         self.playAgainButton.setFixedSize(self.standardised(160), self.standardised(44))
         self.playAgainButton.clicked.connect(self.onPlayAgainClicked)
@@ -244,12 +257,14 @@ class GameScreen(QWidget):
         self.playAgainButton.setStyleSheet("color: white; background: transparent; border: none;")
         buttonsContainer.addWidget(self.playAgainButton, alignment=Qt.AlignCenter)
 
+        #QUIT TO MENU
         self.quitButton = TextButton("Return to Menu", checkable=False)
         self.quitButton.setFixedSize(self.standardised(160), self.standardised(44))
         self.quitButton.clicked.connect(self.onQuitClicked)
         self.quitButton.setStyleSheet("color: white; background: transparent; border: none;")
         buttonsContainer.addWidget(self.quitButton, alignment=Qt.AlignCenter)
 
+        #QUIT PROGRAM
         self.quitAppButton = TextButton("Quit", checkable=False)
         self.quitAppButton.setFixedSize(self.standardised(160), self.standardised(44))
         self.quitAppButton.clicked.connect(self.onQuitAppClicked)
@@ -259,7 +274,7 @@ class GameScreen(QWidget):
         self.leftLayout.addLayout(buttonsContainer)
         self.leftLayout.addStretch(1)
 
-        # --- Right Container ---
+        #Right container
         self.rightContainer = QFrame()
         self.rightContainer.setStyleSheet(f"""
             background-color: #1E1E1E;
@@ -276,9 +291,11 @@ class GameScreen(QWidget):
         rightLayout.setSpacing(self.standardised(20))
         rightLayout.setAlignment(Qt.AlignCenter)
 
-        print(f"MODE IS {self.mode}!!!!!!!!!!")
+        print(f"DEBUG: MODE IS {self.mode}!")
+        print(f"DEBUG: numcomputers: {self.numComputers}")
 
-        # --- Board ---
+        
+        #Board
         if self.mode == "Yavalath":
             self.boardObject = YavalathBoard
         elif self.mode == "Pentalath":
@@ -289,57 +306,44 @@ class GameScreen(QWidget):
         else:
             print("Unknown game state")
 
-# Find this section in GameScreen.py around line 120-140
-# Replace the board initialization code with this:
-
-        # Determine game mode based on number of computers
-        if self.numComputers == 0:
-            mode_val = "human"
-            human_player = 1  # Doesn't matter for human vs human
-        elif self.numComputers == 1:
-            mode_val = "human_vs_ai"
-            human_player = 1  # Human is player 1, AI is player 2
-        else:  # numComputers == 2
-            mode_val = "ai_vs_ai"
-            human_player = None  # No human player
-
-        side, radius, colors, ai_move_delay = (
-            self.selectedSide, self.selectedRadius, self.selectedColors, 0
+        # determine game mode that is sent from settings screen
+        #Actually redundant but works
+        mode_val = "human" if gameSettings.get("game_type", "human") == "human" else "ai"
+        side, radius, colors, ai_move_delay, human_player, wait_for_message = (
+            self.selectedSide, self.selectedRadius, self.selectedColors, 0, 1, True
         )
-        wait_for_message = True
 
+        #Result Label
         self.resultLabel = QLabel("")
         self.resultLabel.setAlignment(Qt.AlignCenter)
         self.resultLabel.setFont(QFont("Arial", self.standardised(18), QFont.Bold))
         self.resultLabel.setStyleSheet("color: red; background: transparent; border: none;")
 
-        # Board initialization with correct mode
+        # BOARD CREATION
+        #Board parameter generation
+        print(f"DEBUG: human player: {human_player}")
         boardParams = dict(
-            side=side, 
-            radius=radius, 
-            colors=colors,
-            ai_move_delay=self.selectedAiMoveDelay,  # Use actual delay, not 0
-            mode=mode_val,
-            human_player=human_player, 
-            wait_for_message=wait_for_message,
+            side=side, radius=radius, colors=colors,
+            ai_move_delay=ai_move_delay, mode=mode_val,
+            human_player=human_player, wait_for_message=wait_for_message,
             message_handler=self.messageLog
         )
-        
-        # Add depth and beam_width for AI modes
-        if mode_val in ["ai_vs_ai", "human_vs_ai"]:
+        #Add extra parameters if mode is ai
+        if mode_val == "ai":
             boardParams["depth"] = self.minimaxConfig["depth"]
             boardParams["beamwidth"] = self.minimaxConfig["beam_width"]
 
         self.boardWidget = self.boardObject(**boardParams)
         self.boardWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        # Use EXACT same calculation as SettingsScreen
+        # Use EXACT same calculation as SettingsScreen to keep board at the same position
         boardWidth = int(self.selectedRadius * 2 * (self.selectedSide + 0.5)) * 2
         boardHeight = int(math.sqrt(3) * self.selectedRadius * (self.selectedSide + 1)) * 2
         self.boardWidget.setMinimumSize(boardWidth, boardHeight)
         self.boardWidget.setMaximumSize(boardWidth, boardHeight)  # ADD THIS
 
-        # --- Layout for board and result ---
+        # Board alignment and result label
+        #All labels placed inside boardLayout
         boardLayout = QVBoxLayout()
         boardLayout.setSpacing(self.standardised(20))
         boardLayout.setAlignment(Qt.AlignCenter)  # Changed from AlignTop
@@ -349,17 +353,19 @@ class GameScreen(QWidget):
 
         mainVerticalLayout.addLayout(mainLayout)
 
-        # --- Initialize state ---
+        #Initialize game state
         self.currentPlayer = 1
         self.timerEnabled = self.selectedAiMoveDelay != 500
         self.updateScoreLabels()
-        self.player1Timer.timeExpired.connect(lambda: self.handleTimeExpired(1))
+        #Connect timer expiration signals to handler functions
+        self.player1Timer.timeExpired.connect(lambda: self.handleTimeExpired(1)) 
         self.player2Timer.timeExpired.connect(lambda: self.handleTimeExpired(2))
 
+        #Start player timer if timer is enabled. In the current version of the game they will always be.
         if self.timerEnabled:
             self.player1Timer.start()
 
-        # --- Connect board signals ---
+        #BOARD SIGNAL CONNECTIONS - each action that the board can do is connected to a corresponding handler function
         if hasattr(self.boardWidget, 'moveMade'):
             self.boardWidget.moveMade.connect(self.onMoveMade)
             self.boardWidget.moveMade.connect(self.clearIllegalMoveMessage)
@@ -376,19 +382,21 @@ class GameScreen(QWidget):
             self.boardWidget.illegalMove.connect(self.showIllegalMoveMessage)
 
     def standardised(self, value):
-        #autism
+        #Standardises the size of the widget based on the screen height, so it scales properly on different resolutions
         return int(value * self.SCREEN_HEIGHT / 1600)
 
     def updateScoreLabels(self):
+        """
+        updates the score labels for both players based on the current gamestate
+        """
         def formatScore(score):
-
+            #Just in case there is a draw limit score to 3 sig figs
             if score % 1 == 0:
                 return str(int(score))
             else:
                 return str(f"{score:.3}")
-            
-        print(self.computersSetting == "human")
 
+        #Function to display an appropriate message for draws/wins
         self.player1Label.setText(f"Player 1 (White): {formatScore(self.player1Score)} wins")
         if self.computersSetting == "0 Computers":
             self.player2Label.setText(f"Player 2 (Magenta): {formatScore(self.player2Score)} wins")
@@ -396,15 +404,18 @@ class GameScreen(QWidget):
             self.player2Label.setText(f"Computer Player (Magenta): {formatScore(self.player2Score)} wins")
 
     def onQuitClicked(self):
+        #Quit button handler method, emits a signal thatis caught by Main.py to return to the menu screen
         self.quitRequested.emit()
 
     def handleTimeExpired(self, player):
+        #Handles the event of a player's timer running out
         if player == 1:
             opponent = 2
         else:
             opponent = 1
 
-        reason = f"Player {opponent} won because Player {player} ran out of time."
+        #Debug log and set result label
+        reason = f"DEBUG: Player {opponent} won because Player {player} ran out of time."
         print(reason)
         self.resultLabel.setText(reason)
 
@@ -413,6 +424,7 @@ class GameScreen(QWidget):
         else:
             self.player2Score += 1
 
+        #Updates score labels
         self.updateScoreLabels()
         self.player1Timer.stop()
         self.player2Timer.stop()
@@ -421,16 +433,21 @@ class GameScreen(QWidget):
         self.playAgainButton.setClickable(True)
         self.playAgainButton.setOpacity(1.0)
 
+        #Fake a game over signal from the board so that the same endgame logic is used as if a player won normally. I am so sorry for this.
         if hasattr(self.boardWidget, 'gameOver'):
             self.boardWidget.gameOver.emit()
             self.onGameOver()
 
     def onMoveMade(self):
+        #Method runs every time a move is made
+
+        #This never gets used
         if not self.timerEnabled:
             return
 
         resetToSeconds = self.moveTimerDuration
 
+        #Resets and starts the relevant player's timer and stops the other player's timer
         if self.currentPlayer == 1:
             self.player1Timer.stop()
             self.player1Timer.reset(duration=resetToSeconds)
@@ -445,15 +462,19 @@ class GameScreen(QWidget):
             self.currentPlayer = 1
 
     def onPlayAgainClicked(self):
+        #Play again button handler method, resets the game state to allow the players to play another game without returning to the menu
         self.playAgainButton.setClickable(False)
         self.playAgainButton.setOpacity(0.5)
         self.freezeTimer.stop()
         self.restartGame()
 
     def onQuitAppClicked(self):
+        #Quit app button handler method, quits the entire application
         QApplication.quit()
 
     def restartGame(self):
+        #Resets the game state to allow the players to play another game without returning to the menu
+        #Score persists between games
         self.boardWidget.continue_game()
         self.resultLabel.setText("")
         self.player1Timer.reset(duration=self.moveTimerDuration)
@@ -464,11 +485,12 @@ class GameScreen(QWidget):
         self.boardWidget.setEnabled(True)
 
     def _freezeTimerTick(self):
-        #Idiot solution instead of putting even a sliver of effort into manual updating
+        #Method called every time a frozen timer ticks, so instead of not moving it just resets the timers every time to create a frozen effect.
         self.player1Timer.reset(duration=self.moveTimerDuration)
         self.player2Timer.reset(duration=self.moveTimerDuration)
 
     def onGameOver(self):
+        #Game over state handler
         self.playAgainButton.setClickable(True)
         self.playAgainButton.setOpacity(1.0)
         self.boardWidget.setEnabled(False)
@@ -477,7 +499,7 @@ class GameScreen(QWidget):
         self.freezeTimer.start()
 
     def handleWinner(self, winner):
-        #Useless bad solution to fake problem I am useless and working with this code is my punishment from god
+        #Gives appropriate amount of points to each player after a game ends - win - 1 loss - 1 draw 0.5 each
         if winner == 1:
             self.player1Score += 1
         elif winner == 2:
@@ -485,7 +507,8 @@ class GameScreen(QWidget):
         elif winner == 0:
             self.player1Score += 0.5    
             self.player2Score += 0.5
-#if if if elif elif if else if else elif else if else if else elif if if elif else elif elif if elif else (26-28th of September needed to have a different outcome)
+
+        #Function to display an appropriate message for draws/wins
         if winner == 1:
             self.resultLabel.setStyleSheet("color: white; background: transparent; border: none;")
             message = "Player 1 won by making winning moves."
@@ -502,9 +525,11 @@ class GameScreen(QWidget):
         self.boardWidget.setEnabled(False)
         self.playAgainButton.setClickable(True)
         self.playAgainButton.setOpacity(1.0)
-#Mental illness diagnosis 
+
     def showIllegalMoveMessage(self):
+        #Handler method to show illegal move message into log
         self.messageLog.send_message("Illegal move! Please try again.")
 
     def clearIllegalMoveMessage(self):
+        #Handler message to clear illegal move message 
         self.messageLog.send_message("")

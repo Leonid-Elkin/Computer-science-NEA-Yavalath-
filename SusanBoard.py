@@ -3,11 +3,12 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout
 from PyQt5.QtCore import QTimer, pyqtSignal
 from Susan.SusanGamestate import GameState
 from ElkUtils.ThreadWorker import AIWorker
-from Susan.BoardUI import BoardGraphics  # UI widget
+from Susan.SusanBoardUI import BoardGraphics
 from copy import deepcopy
 
 
 class Board(QWidget):
+    #Signals emitted on game events
     moveMade = pyqtSignal()
     gameOver = pyqtSignal()
     player1Win = pyqtSignal()
@@ -21,7 +22,7 @@ class Board(QWidget):
         radius=30,
         colors=None,
         ai_move_delay=500,
-        mode="human_vs_ai",  # "human", "human_vs_ai", or "ai_vs_ai"
+        mode="human_vs_ai",
         human_player=1,
         depth=4,
         beamwidth=10,
@@ -30,8 +31,7 @@ class Board(QWidget):
         parent=None
     ):
         super().__init__(parent)
-
-        print(f"[SusanBoard] Created new Susan board with mode={mode}, human_player={human_player}")
+        #Params
         self.side = side
         self.radius = radius
         self.colors = colors
@@ -42,48 +42,31 @@ class Board(QWidget):
         self.human_player = human_player
         self.wait_for_message = wait_for_message
         self.winning_line = []
-
+        self.recent_moves = []
+        self.message_handler = message_handler
         self.game_state = GameState(side=self.side)
         self.current_player = 1
         self.game_over = False
         self.ai_worker = None
-
-        self.recent_moves = []
-        self.message_handler = message_handler
-
         self.has_moved_this_turn = False
 
+        #For consistency margins are 0
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
         self.board_graphics = BoardGraphics(controller=self, radius=self.radius, colors=self.colors)
         self.layout.addWidget(self.board_graphics)
 
+        #Update board graphics every time a move is made
         self.moveMade.connect(self.board_graphics.update)
 
-        # Use QTimer to delay AI start until after widget is fully initialized
+        #Delay AI start until after the widget is fully initialised
         QTimer.singleShot(100, self.start_game)
 
-    # -------------------------
-    # Message Handling
-    # -------------------------
-    def _send_message(self, msg):
-        self.recent_moves.append(msg)
-        if len(self.recent_moves) > 5:
-            self.recent_moves.pop(0)
-
-        if self.message_handler:
-            if callable(self.message_handler):
-                self.message_handler(msg)
-            elif hasattr(self.message_handler, "send_message"):
-                self.message_handler.send_message(msg)
-
-    # -------------------------
-    # AI / Game Mode Control
-    # -------------------------
     def set_human_vs_ai(self, human_vs_ai=True, human_player=1):
         """
-        Configure board to play against AI or human.
+        Reconfigures the board mode at runtime.
+        Pass human_vs_ai=True to play against the AI, or False for a human vs human game.
         """
         if human_vs_ai:
             self.mode = "human_vs_ai"
@@ -91,174 +74,151 @@ class Board(QWidget):
         else:
             self.mode = "human"
             self.human_player = None
-        
-        print(f"[SusanBoard] Mode set to {self.mode}, human_player={self.human_player}")
 
     def is_ai_turn(self):
-        """Check if it's currently the AI's turn"""
+        #Returns True if the AI should be moving in the current game state
         if self.mode == "ai_vs_ai":
             return True
-        elif self.mode == "human_vs_ai":
-            is_ai = self.current_player != self.human_player
-            print(f"[SusanBoard] is_ai_turn check: current_player={self.current_player}, human_player={self.human_player}, result={is_ai}")
-            return is_ai
-        else:  # mode == "human"
-            return False
+        if self.mode in ("human_vs_ai", "ai"):
+            return self.current_player != self.human_player
+        return False
 
     def start_game(self):
-        print(f"[SusanBoard] Starting game with mode={self.mode}, human_player={self.human_player}, current_player={self.current_player}")
         self.reset_game()
-        
-        # Check if AI should play first and schedule it
+
+        #Kick off the first AI turn if applicable
         if self.is_ai_turn():
-            print(f"[SusanBoard] AI should move first, scheduling AI turn")
-            # Use a small delay to ensure everything is ready
             QTimer.singleShot(self.ai_move_delay, self.start_ai_turn)
-        else:
-            print(f"[SusanBoard] Human should move first")
 
     def reset_game(self):
-        print(f"[SusanBoard] Resetting game - mode={self.mode}, human_player={self.human_player}")
+        #Rebuilds game state and resets all tracking variables to their initial values
         self.game_state = GameState(side=self.side)
         self.current_player = 1
         self.game_over = False
         self.has_moved_this_turn = False
         self.winning_line = []
+
+        #Reset signal catcher
         if hasattr(self.board_graphics, "reset"):
             self.board_graphics.reset()
+
+        #Update
         self.moveMade.emit()
 
-    # -------------------------
-    # AI Turn
-    # -------------------------
     def start_ai_turn(self):
-        print(f"[SusanBoard] start_ai_turn called - game_over={self.game_over}, mode={self.mode}, current_player={self.current_player}")
-        
         if self.game_over:
-            print("[SusanBoard] Game over, not starting AI turn")
             return
-        
         if not self.is_ai_turn():
-            print(f"[SusanBoard] Not AI turn (mode={self.mode}, current_player={self.current_player}, human={self.human_player})")
-            return
-            
-        if self.ai_worker and self.ai_worker.isRunning():
-            print("[SusanBoard] AI worker already running")
             return
 
-        print(f"[SusanBoard] Starting AI worker for player {self.current_player}")
-        game_state_copy = deepcopy(self.game_state)
+        #Avoid launching a second worker if one is already running
+        if self.ai_worker and self.ai_worker.isRunning():
+            return
+
+        #Param passing into AIWorker
+        gameStateCopy = deepcopy(self.game_state)
         self.ai_worker = AIWorker(
-            game_state_copy,
+            gameStateCopy,
             self.current_player,
             max_depth=self.depth,
             beam_width=self.beamwidth,
             ai="Susan"
         )
+        #Communicator
         self.ai_worker.moveReady.connect(self.on_ai_move_ready)
         self.ai_worker.start()
-        print(f"[SusanBoard] AI worker started")
 
     def on_ai_move_ready(self, move):
-        print(f"[SusanBoard] on_ai_move_ready called with move={move}, game_over={self.game_over}")
-        
+        #Receives the move chosen by the AI worker thread and applies it to the live game state
         if self.game_over or move is None:
-            if move is None:
-                print("[SusanBoard] AI returned no move")
             return
 
-        print(f"[SusanBoard] Processing AI move: {move}")
-
+        #Dispatch movement vs placement and log the result
         if isinstance(move, tuple) and len(move) == 2 and isinstance(move[0], tuple):
-            from_pos, to_pos = move
-            success = self.game_state.make_move(to_pos, self.current_player, from_pos=from_pos)
-            move_desc = f"AI Player {self.current_player} moved piece from {from_pos} to {to_pos}"
+            fromPos, toPos = move
+            success = self.game_state.make_move(toPos, self.current_player, from_pos=fromPos)
+            moveDesc = f"AI Player {self.current_player} moved piece from {fromPos} to {toPos}"
         else:
-            to_pos = move
-            success = self.game_state.make_move(to_pos, self.current_player)
-            move_desc = f"AI Player {self.current_player} placed piece at {to_pos}"
+            toPos = move
+            success = self.game_state.make_move(toPos, self.current_player)
+            moveDesc = f"AI Player {self.current_player} placed piece at {toPos}"
 
         if not success:
             self._send_message(f"Illegal AI move attempted by Player {self.current_player}: {move}")
-            print(f"[SusanBoard] Illegal AI move: {move}")
             return
 
-        print(f"[SusanBoard] AI move successful: {move_desc}")
-        self._send_message(move_desc)
+        self._send_message(moveDesc)
         self.moveMade.emit()
-        self.current_player = 3 - self.current_player
-        print(f"[SusanBoard] Current player now: {self.current_player}")
+        self.current_player = 3 - self.current_player  #swap players
 
+        #Check game-ending conditions
         if self.game_state.is_terminal():
             self.game_over = True
             self.gameOver.emit()
             self._emit_game_result()
-            self._send_message("AI move caused game over")
+            self._send_message("Game over")
+
             if not self.wait_for_message:
                 QTimer.singleShot(1000, self.start_game)
             return
 
-        # Check if next turn is also AI
+        #Schedule the next AI turn after the configured delay
         if self.is_ai_turn():
-            print(f"[SusanBoard] Next turn is also AI, scheduling next AI move")
             QTimer.singleShot(self.ai_move_delay, self.start_ai_turn)
-        else:
-            print(f"[SusanBoard] Next turn is human")
 
-    # -------------------------
-    # Human Move
-    # -------------------------
     def make_human_move(self, move, from_pos=None):
-        print(f"[SusanBoard] make_human_move called: move={move}, from_pos={from_pos}, game_over={self.game_over}")
-        
+        #Reject input if the game is over or it is not this human's turn
         if self.game_over:
-            print("[SusanBoard] Game over, ignoring human move")
             return False
-
-        # Check if it's human's turn
         if self.is_ai_turn():
-            print(f"[SusanBoard] Not human's turn (mode={self.mode}, current={self.current_player})")
             return False
 
-        current_player = self.current_player
-        success = self.game_state.make_move(move, current_player, from_pos=from_pos)
+        currentPlayer = self.current_player
+        success = self.game_state.make_move(move, currentPlayer, from_pos=from_pos)
+
         if not success:
+            #Notify listeners that an illegal move was attempted
             self.illegalMove.emit()
-            self._send_message(f"Illegal move attempted by Player {current_player}: {move}")
-            print(f"[SusanBoard] Illegal human move")
+            self._send_message(f"Illegal move attempted by Player {currentPlayer}: {move}")
             return False
 
+        #Logger for valid move
         action = f"placed at {move}" if from_pos is None else f"moved from {from_pos} to {move}"
-        self._send_message(f"Player {current_player} {action}")
-        print(f"[SusanBoard] Human move successful: {action}")
-        self.moveMade.emit()
-        self.current_player = 3 - current_player
-        print(f"[SusanBoard] Current player now: {self.current_player}")
+        self._send_message(f"Player {currentPlayer} {action}")
 
+        self.moveMade.emit()  #Update
+        self.current_player = 3 - currentPlayer
+
+        #Terminal move checker
         if self.game_state.is_terminal():
             self.game_over = True
             self.gameOver.emit()
             self._emit_game_result()
-            self._send_message("Human move caused game over")
-        else:
-            # Check if next turn is AI
-            if self.is_ai_turn():
-                print(f"[SusanBoard] Next turn is AI, scheduling AI move")
-                QTimer.singleShot(self.ai_move_delay, self.start_ai_turn)
+            self._send_message("Game over")
+
+            if not self.wait_for_message:
+                QTimer.singleShot(1000, self.start_game)
+            return True
+
+        #Start AI turn if applicable
+        if self.is_ai_turn():
+            QTimer.singleShot(self.ai_move_delay, self.start_ai_turn)
 
         return True
 
-    # -------------------------
-    # Game Result / UI
-    # -------------------------
     def _emit_game_result(self):
         winner = None
         self.winning_line = []
-        if hasattr(self.game_state, 'get_winner'):
+
+        #Receives signal of who won
+        if hasattr(self.game_state, "get_winner"):
             winner = self.game_state.get_winner()
+
+        #Retrieve the winning line only for a decisive result
         if winner in [1, 2]:
             self.winning_line = self.game_state.get_winning_line()
 
+        #Show message of who wins
         if winner == 1:
             self.player1Win.emit()
             self._send_message("Player 1 wins!")
@@ -272,21 +232,29 @@ class Board(QWidget):
             self._send_message("Game not finished or unknown result")
 
         self.moveMade.emit()
-        self._send_message("Game over")
 
-    # -------------------------
-    # Reset / Continue
-    # -------------------------
     def continue_game(self):
+        #Called externally once an awaited message has been acknowledged
         if self.game_over and self.wait_for_message:
             self.start_game()
 
-    def reset_board_state(self):
-        self.game_state = GameState(side=self.side)
-        self.current_player = 1
-        self.game_over = False
-        self.has_moved_this_turn = False
-        if hasattr(self.board_graphics, "reset"):
-            self.board_graphics.reset()
-        self.moveMade.emit()
-        self.board_graphics.update()
+    def _on_game_over(self):
+        #Internal slot connected to the gameOver signal
+        self.reset_game()
+
+    def play_again(self):
+        #Called when the Play Again button is pressed
+        self.start_game()
+
+    def _send_message(self, msg):
+        #Keep a rolling window of the last 5 messages for local inspection
+        self.recent_moves.append(msg)
+        if len(self.recent_moves) > 5:
+            self.recent_moves.pop(0)
+
+        #Forward to the external handler if one was provided
+        if self.message_handler:
+            if callable(self.message_handler):
+                self.message_handler(msg)
+            elif hasattr(self.message_handler, "send_message"):
+                self.message_handler.send_message(msg)

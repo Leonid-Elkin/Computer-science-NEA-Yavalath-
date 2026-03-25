@@ -7,179 +7,192 @@ from ElkUtils.DataStructures import CircularQueue
 
 
 class AudioManager(QObject):
-    """
-    AudioManager handles music playback, intro sounds, and track navigation
-    using python-vlc instead of QtMultimedia.
-    """
 
-    # Qt signals for UI integration
-    positionChanged = pyqtSignal(int)   # current position (s)
-    durationChanged = pyqtSignal(int)   # total duration (s)
-    stateChanged = pyqtSignal(bool)     # True if playing, False otherwise
+    #Signal connections
+    positionChanged = pyqtSignal(int)
+    durationChanged = pyqtSignal(int)
+    stateChanged = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
+        """
+        Loads mp3 files from a designated folder onto a circular queue and offers an interface through which to play them
+        Audio is controlled by VLC and the user must have it installed to access playlist creation
+        """
 
-        # --- VLC Core ---
+        #Set up VLC (Needs preenstalled vlc player on device)
         self.vlcInstance = vlc.Instance()
 
-        # Dedicated players
+        #Make different music players for different tasks
         self.introPlayer = self.vlcInstance.media_player_new()
-        self.musicListPlayer = self.vlcInstance.media_list_player_new()
         self.musicPlayer = self.vlcInstance.media_player_new()
+        self.musicListPlayer = self.vlcInstance.media_list_player_new()
         self.musicListPlayer.set_media_player(self.musicPlayer)
 
-        # Playlist + track queue
+        #Param declaration
         self.mediaList = self.vlcInstance.media_list_new()
         self.trackQueue = None
         self.queueSize = 0
 
-        # Poll playback status since VLC doesn't emit Qt signals
+        #Timer creation (for displaying elapsed time on UI)
         self.timer = QTimer()
-        self.timer.setInterval(1000)  # every second
+        self.timer.setInterval(1000)
         self.timer.timeout.connect(self._pollPosition)
         self.timer.start()
 
-    # ---------------- Playlist wrapper ----------------
     @property
     def musicPlaylist(self):
-        class PlaylistWrapper:
-            def __init__(self, manager):
-                self.manager = manager
+        #Getter method of object
+        return self
 
-            def next(self):
-                self.manager.nextTrack()
+    def next(self):
+        #Play next track
+        self.nextTrack()
 
-            def previous(self):
-                self.manager.prevTrack()
+    def previous(self):
+        #Play previous track
+        self.prevTrack()
 
-        return PlaylistWrapper(self)
-
-    # ---------------- Intro sound ----------------
     def playIntroSound(self):
+        #Special method for playing the intro sound - has special path
         introPath = os.path.abspath("Audio/Intro/intro.mp3")
-        if not os.path.exists(introPath):
-            print("[AudioManager] Intro file not found!")
+        if not os.path.exists(introPath): #For it to not throw an error if file not found
             return
 
+        #Plays file if found
         media = self.vlcInstance.media_new(introPath)
         self.introPlayer.set_media(media)
         self.introPlayer.audio_set_volume(70)
         self.introPlayer.play()
 
     def stopIntroSound(self):
+        #Stops inro sound if intro ends before the sound has completed
         self.introPlayer.stop()
 
-    # ---------------- Soundtrack ----------------
+
     def loadSoundtrack(self, folder="Audio/Soundtrack"):
-        if not os.path.exists(folder):
-            print(f"[AudioManager] Folder '{folder}' not found.")
+        """
+        Turns folder of mp3s into a playlist
+        Playlist stored on a circular queue
+        """
+        if not os.path.exists(folder): #Check if folder exists
             return
 
-        files = [f for f in os.listdir(folder) if f.lower().endswith(".mp3")]
+        files = []
+
+        #Runs only if file exists
+        for f in os.listdir(folder):
+            if f.lower().endswith(".mp3"):
+                files.append(f)
+
+        #if files empty dont play
         if not files:
-            print(f"[AudioManager] No MP3 files in {folder}")
             return
 
-        # Shuffle files for random playback order
         random.shuffle(files)
+
+        #Circular queue setup
         self.queueSize = len(files)
         self.trackQueue = CircularQueue(self.queueSize)
-
-        # Rebuild VLC media list with shuffled order
         self.mediaList = self.vlcInstance.media_list_new()
+
+
+        #Load every file into circular queue
         for file in files:
             fullPath = os.path.abspath(os.path.join(folder, file))
             self.trackQueue.enqueue(fullPath)
-            media = self.vlcInstance.media_new(fullPath)
-            self.mediaList.add_media(media)
+            self.mediaList.add_media(self.vlcInstance.media_new(fullPath))
 
+        #Start music player
         self.musicListPlayer.set_media_list(self.mediaList)
-        
-        # Set playback mode to normal (not repeat) to ensure shuffle order is followed
-        # VLC will play through the shuffled list in order
         self.musicListPlayer.set_playback_mode(vlc.PlaybackMode.loop)
-        
         self.musicListPlayer.play()
 
     def reshuffleSoundtrack(self):
-        """Re-shuffle the current soundtrack for a new random order."""
+        """
+        Randomly shuffles playlist
+        Currently only used right after music playlist creation
+        """
+
+        #Doesnt run if no music present
         if self.queueSize == 0:
-            print("[AudioManager] No tracks loaded to shuffle.")
             return
-        
-        # Extract all tracks from current queue
-        tracks = []
-        for i in range(self.queueSize):
-            tracks.append(self.trackQueue.dequeue())
-        
-        # Shuffle and rebuild
+
+        #Load all tracks into list from queue and shuffle it using built in method
+        tracks = [self.trackQueue.dequeue() for i in range(self.queueSize)]
         random.shuffle(tracks)
-        
-        # Rebuild queue and media list
+
+        #Create new circular queue
         self.trackQueue = CircularQueue(self.queueSize)
         self.mediaList = self.vlcInstance.media_list_new()
-        
+
         for fullPath in tracks:
             self.trackQueue.enqueue(fullPath)
-            media = self.vlcInstance.media_new(fullPath)
-            self.mediaList.add_media(media)
-        
-        # Update player with new shuffled list
-        was_playing = self.musicPlayer.is_playing()
+            self.mediaList.add_media(self.vlcInstance.media_new(fullPath))
+
+        wasPlaying = self.musicPlayer.is_playing()
         self.musicListPlayer.set_media_list(self.mediaList)
-        
-        if was_playing:
+        #Play song that was playing before shuffling
+        if wasPlaying:
             self.musicListPlayer.play()
-        
-        print("[AudioManager] Soundtrack reshuffled!")
 
     def nextTrack(self):
+        #Fetches past track from queue
         if self.queueSize > 0:
             self.trackQueue.dequeue()
             self.musicListPlayer.next()
 
     def prevTrack(self):
+        #Fetches next track from queue
         if self.queueSize > 0:
-            # VLC doesn't track "previous" naturally → adjust manually
-            current = self.trackQueue.front
-            self.trackQueue.front = (current - 1 + self.queueSize) % self.queueSize
+            self.trackQueue.front = (self.trackQueue.front - 1) % self.queueSize
             self.musicListPlayer.previous()
 
-    # ---------------- Playback control ----------------
     def playSoundtrack(self):
+        #Plays soundtrack
         self.musicListPlayer.play()
 
     def pauseSoundtrack(self):
+        #Pauses current file
         self.musicListPlayer.pause()
 
     def stopSoundtrack(self):
+        #Stops current file (Difference between this and pause is that pause stores the time on which the file was stored)
+        #Currently unused
         self.musicListPlayer.stop()
 
     def togglePlayPause(self):
+        #Starts/stops music based on what button pressed
         if self.musicPlayer.is_playing():
             self.musicListPlayer.pause()
         else:
             self.musicListPlayer.play()
 
     def setVolume(self, volume: int):
+        #Volume setter
         self.musicPlayer.audio_set_volume(volume)
 
     def seek(self, seconds: int):
-        """Seek to `seconds` in the current track."""
+        #Seeker
         self.musicPlayer.set_time(seconds * 1000)
 
-    # ---------------- Polling ----------------
     def _pollPosition(self):
-        if self.musicPlayer.is_playing():
-            pos_ms = self.musicPlayer.get_time()
-            dur_ms = self.musicPlayer.get_length()
+        #Exception handler if file not in player somehow
+        if not self.musicPlayer:
+            return
 
-            if pos_ms != -1:
-                self.positionChanged.emit(pos_ms // 1000)
-            if dur_ms != -1:
-                self.durationChanged.emit(dur_ms // 1000)
+        #Gets current file that is playing
+        isPlaying = self.musicPlayer.is_playing()
 
-            self.stateChanged.emit(True)
-        else:
-            self.stateChanged.emit(False)
+        if isPlaying:
+            #Get details about file length
+            posMs = self.musicPlayer.get_time()
+            durMs = self.musicPlayer.get_length()
+
+            #Emits signal for the musicWidget with the time left and total time
+            if posMs != -1:
+                self.positionChanged.emit(posMs // 1000)
+            if durMs != -1:
+                self.durationChanged.emit(durMs // 1000)
+
+        self.stateChanged.emit(isPlaying)

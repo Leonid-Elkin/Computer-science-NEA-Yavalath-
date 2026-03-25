@@ -5,168 +5,160 @@ DIRECTIONS = [
 
 
 def hex_distance(a, b):
+    # Calculates the axial distance between two points in the hexagon
     q1, r1 = a
     q2, r2 = b
     s1 = -q1 - r1
     s2 = -q2 - r2
     return max(abs(q1 - q2), abs(r1 - r2), abs(s1 - s2))
-    #Stupid coords
+
 
 def count_consecutive(board, pos, player, target_length, directions=DIRECTIONS):
+    """
+    Counts the amount of consecutive patterns of given length.
+    Accepts the board array.
+    """
     count = 0
 
+    # Considers all 6 directions from the picked hexagon
     for dq, dr in directions:
-        total_length = 1
+        totalLength = 1
 
-        for direction_sign in [1, -1]:
+        # Sees how much it can go in each direction without a color change
+        for directionSign in [1, -1]:
             q, r = pos
 
             while True:
-                q += direction_sign * dq
-                r += direction_sign * dr
+                q += directionSign * dq
+                r += directionSign * dr
 
                 if board.get((q, r), 0) == player:
-                    total_length += 1
+                    totalLength += 1
                 else:
                     break
 
-        if total_length >= target_length:
+        # If that length is the same as the target then add 1 to the count
+        if totalLength >= target_length:
             count += 1
 
     return count
 
-    #More O(N^2) operations for no reason
-
 
 def is_winning_move(board, pos, player, directions=DIRECTIONS):
+    """
+    Yavalath-specific method that simply checks if there is a four in a row
+    pattern and if so deletes the object and returns True.
+    """
     board[pos] = player
-    winning_lines = count_consecutive(board, pos, player, 4, directions)
+    winningLines = count_consecutive(board, pos, player, 4, directions)
     del board[pos]
-    return winning_lines > 0
+    return winningLines > 0
 
 
 def creates_three_in_a_row(board, pos, player, directions=DIRECTIONS):
+    """
+    Yavalath-specific method that simply checks if there is a three in a row
+    pattern and if so deletes the object and returns True.
+    """
     board[pos] = player
-    has_three = count_consecutive(board, pos, player, 3, directions)
+    hasThree = count_consecutive(board, pos, player, 3, directions)
     del board[pos]
-    return has_three > 0
+    return hasThree > 0
 
 
 def find_opponent_gap_fours(board, opponent, directions=DIRECTIONS):
+    """
+    Method used in the minimax evaluation function that checks if a potential
+    4 in a row is possible next move. This method specifically detects if there
+    is an imminent lose threat. Stores threats in a list in the format
+    (empty cell, full line).
+    """
     threats = []
-    visited = set()
+    visited = set()  # Keeps track of already visited areas
 
+    # Iterate over every opponent piece
     for position, value in board.items():
         if value != opponent:
             continue
 
+        # Don't check already visited areas
         for dq, dr in directions:
             if (position, dq, dr) in visited:
                 continue
 
+            # Build a line in this direction
             line = [position]
             q, r = position
 
-            for _ in range(4):
+            # Extend line to length 4
+            for i in range(4):
                 q += dq
                 r += dr
                 line.append((q, r))
 
-            if len(line) < 5:
-                continue
+            # See how many opponent stones are on the line
+            opponentStones = [p for p in line if board.get(p) == opponent]
 
-            opponent_stones = [p for p in line if board.get(p) == opponent]
-            empty_cells = [p for p in line if board.get(p) == 0]
+            # See how many empty cells are on the line
+            emptyCells = [p for p in line if board.get(p) == 0]
 
-            if len(opponent_stones) == 4 and len(empty_cells) == 1:
-                threats.append((empty_cells[0], line))
+            # If exactly 4 opponent stones and 1 empty cell, there is a gap threat
+            if len(opponentStones) == 4 and len(emptyCells) == 1:
+                threats.append((emptyCells[0], line))
 
             for p in line:
                 visited.add((p, dq, dr))
 
+    # Return details about every threat
     return threats
-
-#This is stupid stupid stupid
-
-
-def detect_forced_lose_scenario(board, player, opponent, directions=DIRECTIONS):
-    threats = find_opponent_gap_fours(board, opponent, directions)
-
-    for gap_position, line in threats:
-        board[gap_position] = player
-        if count_consecutive(board, gap_position, player, 3, directions):
-            del board[gap_position]
-            return True
-        del board[gap_position]
-
-    return False
-
-
-def find_all_forced_losses(board, player, opponent, directions=DIRECTIONS):
-    forced_losses = []
-    threats = find_opponent_gap_fours(board, opponent, directions)
-
-    for gap_position, line in threats:
-        board[gap_position] = player
-        if count_consecutive(board, gap_position, player, 3, directions):
-            forced_losses.append((gap_position, line))
-        del board[gap_position]
-
-    return forced_losses
-
-
-def opponent_has_double_threat(board, opponent, directions=DIRECTIONS):
-    threats = find_opponent_gap_fours(board, opponent, directions)
-    return len(threats) >= 2
-
-
-def find_fork_moves(board, opponent, directions=DIRECTIONS):
-    fork_moves = []
-    empty_positions = [pos for pos, value in board.items() if value == 0]
-
-    for move in empty_positions:
-        board[move] = opponent
-        threats = find_opponent_gap_fours(board, opponent, directions)
-        del board[move]
-
-        if len(threats) >= 2:
-            fork_moves.append(move)
-
-    return fork_moves
 
 
 def count_open_sequences(board, player, length, directions=DIRECTIONS):
-    open_sequence_count = 0
-    visited = set()
+    """
+    Counts the number of open sequences of a given length for a player.
+    An open sequence has empty cells on both ends, meaning it can still be extended.
+    """
+    openSequenceCount = 0
+    visited = set()  #Keeps track of already visited sequences
 
+    #Iterate over every player piece
     for position, value in board.items():
         if value != player:
             continue
 
+        #Consider all 6 directions
         for direction in directions:
             if (position, direction) in visited:
                 continue
 
             dq, dr = direction
+
+            #Build a sequence in this direction
             sequence = [position]
             q, r = position
 
+            # Extend sequence to the target length
             for _ in range(length - 1):
                 q += dq
                 r += dr
+
                 if board.get((q, r), 0) == player:
                     sequence.append((q, r))
                 else:
                     break
 
+            #Only count if the sequence reaches the target length
             if len(sequence) == length:
-                before = (position[0] - dq, position[1] - dr)
-                after = (q + dq, r + dr)
+                beforeCell = (position[0] - dq, position[1] - dr)
+                afterCell = (q + dq, r + dr)
 
-                if board.get(before, 0) == 0 and board.get(after, 0) == 0:
-                    open_sequence_count += 1
+                #Check both ends are open (empty), meaning the sequence can still grow
+                if board.get(beforeCell, 0) == 0 and board.get(afterCell, 0) == 0:
+                    openSequenceCount += 1
 
+                    #Mark all cells in this sequence as visited to avoid double counting
                     for cell in sequence:
                         visited.add((cell, direction))
 
-    return open_sequence_count
+    return openSequenceCount
+

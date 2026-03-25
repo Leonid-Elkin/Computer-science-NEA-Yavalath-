@@ -6,12 +6,11 @@ from UI.StarLogoWidget import StarLogoWidget
 
 class IntroScreen(QWidget):
     
-    #File signals fucking stupid file signals not working half the time
+    #Signal setups
     IntroStarted = pyqtSignal()
     FadeInFinished = pyqtSignal()
     FadeOutStarted = pyqtSignal()
     IntroFinished = pyqtSignal()
-    #Never mind its all good
 
     def __init__(self, displayDuration = 2000, fadeOutDuration = 1000):
         print("DEBUG: INTRO SEQUENCE BEGUN")
@@ -25,7 +24,6 @@ class IntroScreen(QWidget):
 
         self.showFullScreen()
 
-        #stupid stylesheet 
         self.setStyleSheet("background-color: black;")
         #self.setStyleSheet("background-color: white;")
         #Light mode

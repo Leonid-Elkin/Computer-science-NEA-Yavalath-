@@ -9,6 +9,9 @@ from UI.Buttons import PlayButton, PauseButton, SkipButton
 
 
 class MusicControlWidget(QWidget):
+    """
+    Music control widget - communicates with the AudioManager
+    """
     def __init__(self, audioManager, parent=None):
         super().__init__(parent)
         self.audioManager = audioManager
@@ -17,7 +20,6 @@ class MusicControlWidget(QWidget):
 
         self.setFixedSize(self.standardised(470), self.standardised(140))
 
-        # --- Container frame ---
         self.container = QFrame(self)
         self.container.setGeometry(0, 0, self.standardised(470), self.standardised(140))
 
@@ -32,7 +34,7 @@ class MusicControlWidget(QWidget):
             }}
         """)
 
-        # --- Buttons ---
+        #Buttons
         self.btnPrevious = SkipButton("previous")
         self.btnNext = SkipButton("next")
         self.btnPlayPause = PlayButton()
@@ -46,18 +48,20 @@ class MusicControlWidget(QWidget):
         self.btnNext.clicked.connect(self.nextTrack)
         self.btnPlayPause.clicked.connect(self.playPause)
 
-        # --- Position slider and labels ---
+        #Slider and labels
         self.positionSlider = QSlider(Qt.Horizontal)
         self.positionSlider.setRange(0, 0)
         self.positionSlider.sliderMoved.connect(self.setPosition)
         self.positionSlider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
+        #Random position constants
         sliderHeight = self.standardised(8)
         borderRadius = self.standardised(4)
         width = self.standardised(10)
         height = self.standardised(20)
         margin = self.standardised(-6)
 
+        #Position slider stylesheet
         self.positionSlider.setStyleSheet(f"""
             QSlider::groove:horizontal {{
                 height: {sliderHeight}px;
@@ -78,6 +82,7 @@ class MusicControlWidget(QWidget):
             }}
         """)
 
+        #Formats elapsed and remaining time labels
         self.labelElapsed = QLabel("00:00")
         self.labelRemaining = QLabel("-00:00")
         for label in (self.labelElapsed, self.labelRemaining):
@@ -85,7 +90,7 @@ class MusicControlWidget(QWidget):
             label.setAlignment(Qt.AlignCenter)
             label.setStyleSheet("color: white;")
 
-        # --- Volume slider and label ---
+        #Volume slider and respective label
         self.volumeLabel = QLabel("Volume")
         self.volumeLabel.setStyleSheet("color: white;")
         self.volumeSlider = QSlider(Qt.Horizontal)
@@ -94,6 +99,7 @@ class MusicControlWidget(QWidget):
         self.volumeSlider.setFixedWidth(self.standardised(100))
         self.volumeSlider.valueChanged.connect(self.changeVolume)
 
+        #Volume slider stylesheet
         self.volumeSlider.setStyleSheet(f"""
             QSlider::groove:horizontal {{
                 height: {sliderHeight}px;
@@ -114,7 +120,7 @@ class MusicControlWidget(QWidget):
             }}
         """)
 
-        # --- Layout ---
+        #Main layout. ContainerLayout is the box around all the elements
         containerLayout = QVBoxLayout(self.container)
         containerLayout.setContentsMargins(self.standardised(15), self.standardised(15), self.standardised(15), self.standardised(15))
         containerLayout.setSpacing(10)
@@ -127,12 +133,14 @@ class MusicControlWidget(QWidget):
         controlsLayout.addWidget(self.btnNext)
         controlsLayout.addStretch()
 
+        #Layout for the position slider and time
         progressLayout = QHBoxLayout()
         progressLayout.setContentsMargins(self.standardised(5), 0, self.standardised(5), 0)
         progressLayout.addWidget(self.labelElapsed)
         progressLayout.addWidget(self.positionSlider)
         progressLayout.addWidget(self.labelRemaining)
 
+        #Layout of the volume slider and label
         volumeLayout = QHBoxLayout()
         volumeLayout.addWidget(self.volumeLabel)
         volumeLayout.addWidget(self.volumeSlider)
@@ -142,33 +150,41 @@ class MusicControlWidget(QWidget):
         containerLayout.addLayout(progressLayout)
         containerLayout.addLayout(volumeLayout)
 
+        #Font styling
         fontSize = self.standardised(15)
         self.volumeLabel.setStyleSheet(f"color: white; font-size: {fontSize}px; border: none;")
         self.labelElapsed.setStyleSheet(f"color: white; font-size: {fontSize}px; border: none;")
         self.labelRemaining.setStyleSheet(f"color: white; font-size: {fontSize}px; border: none;")
 
-        # --- Seek tracking ---
+        #Tracking 
         self.isSeeking = False
         self.positionSlider.sliderPressed.connect(self.startSeek)
         self.positionSlider.sliderReleased.connect(self.endSeek)
 
-        # --- Connect to AudioManager (VLC signals) ---
+        #Signal connections to audioManager
         self.audioManager.positionChanged.connect(self.updatePosition)
         self.audioManager.durationChanged.connect(self.updateDuration)
         self.audioManager.stateChanged.connect(self.updatePlayPauseIcon)
 
     def prevTrack(self):
+        #fetch and play previous track from the queue
         self.playlist.previous()
         self.audioManager.playSoundtrack()
 
     def nextTrack(self):
+        #fetch and play next track from the queue
         self.playlist.next()
         self.audioManager.playSoundtrack()
 
     def playPause(self):
+        #Pauses the current track
         self.audioManager.togglePlayPause()
 
     def updatePlayPauseIcon(self, playing):
+        """
+        Updates the play/pause button icon based on the current state of the music (Triangle if paused, two vertical bars if playing)
+        Sends out update by calling the _replacePlayPauseButton method
+        """
         if playing:
             if not isinstance(self.btnPlayPause, PauseButton):
                 self._replacePlayPauseButton(PauseButton())
@@ -177,6 +193,7 @@ class MusicControlWidget(QWidget):
                 self._replacePlayPauseButton(PlayButton())
 
     def _replacePlayPauseButton(self, new_button):
+        #Actually replaces the play/pause button
         new_button.setFixedSize(self.standardised(50), self.standardised(50))
         new_button.clicked.connect(self.playPause)
 
@@ -192,9 +209,11 @@ class MusicControlWidget(QWidget):
         self.btnPlayPause = new_button
 
     def changeVolume(self, value):
+        #Simple setter method for volume
         self.audioManager.setVolume(value)
 
     def updatePosition(self, seconds):
+        # Updates the play position slider depending on the elapsed time of the track.
         if not self.isSeeking:
             self.positionSlider.setValue(seconds)
             self.labelElapsed.setText(self.sToHMS(seconds))
@@ -203,25 +222,32 @@ class MusicControlWidget(QWidget):
             self.labelRemaining.setText(f"-{self.sToHMS(remaining)}")
 
     def updateDuration(self, seconds):
+        #Updates the range of the position slider depending on the duration of the track
         self.positionSlider.setRange(0, seconds)
         remaining = max(seconds - self.positionSlider.value(), 0)
         self.labelRemaining.setText(f"-{self.sToHMS(remaining)}")
 
     def setPosition(self, seconds):
+        #Simple setter method for slider position
         self.audioManager.seek(seconds)
 
     def startSeek(self):
+        #When the user drags the slider this method is called
         self.isSeeking = True
 
     def endSeek(self):
+        #When the user releases drag of the slider this method is called
         self.isSeeking = False
         self.audioManager.seek(self.positionSlider.value())
 
     def sToHMS(self, s):
+        #Helper method to convert seconds into minute/second format
         m, s = divmod(s, 60)
         return f"{m:02d}:{s:02d}"
 
     def standardised(self, value):
+        #Standardises the size of the widget based on the screen height, so it scales properly on different resolutions
+        #Everything scaled from 1920x1080 design resolution
         screen = QGuiApplication.primaryScreen()
         geometry = screen.geometry()
         SCREEN_HEIGHT = geometry.height()

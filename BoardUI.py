@@ -1,305 +1,340 @@
 import math
 from PyQt5.QtWidgets import QWidget
-from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPolygonF, QPainterPath, QGuiApplication
+from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPolygonF, QFont
 from PyQt5.QtCore import Qt, QPointF
 
 
 class BoardGraphics(QWidget):
+    #Responsible for rendering the hex board and handling all mouse interaction with it
+
     def __init__(self, controller, radius=30, colors=None, parent=None):
         super().__init__(parent)
+
+        #Store a reference to the game controller so the board can read state and trigger moves
         self.controller = controller
         self.radius = radius
-        self.hex_height = math.sqrt(3) * self.radius
-        self.hex_width = 2 * self.radius
 
-        default_colors = {
+        #Pre-compute hex dimensions from the radius to avoid recalculating them every paint
+        self.hexHeight = math.sqrt(3) * self.radius
+        self.hexWidth = 2 * self.radius
+        self.hexSpacing = 2
+
+        #Winning line is stored here after the game ends so paintEvent can draw it
+        self.winningLine = []
+
+        #Recent move messages are displayed in the corner as a short move history
+        self.recentMoveMessages = []
+
+        #Hover tracking - stores the axial coords of whichever hex the mouse is over
+        self.hoveredHexCoords = None
+        self.hoverHighlightEnabled = True
+
+        #Fall back to a basic color scheme if none was provided by the caller
+        defaultColors = {
             "player1": QColor("red"),
             "player2": QColor("blue"),
             "empty": QColor("white"),
             "border": Qt.black,
-            "selected1": QColor("green"),
-            "selected2": QColor("green")
+            "hover": QColor(255, 255, 200, 80)
         }
-        self.colors = colors if colors else default_colors
 
-        board_width = int(self.hex_width * (controller.side + 0.5))
-        board_height = int(self.hex_height * (controller.side + 0.5))
-        self.setMinimumSize(board_width, board_height)
+        self.colors = colors if colors else defaultColors
 
-        if hasattr(self.controller, "moveMade"):
-            self.controller.moveMade.connect(self.update)
+        #Set the minimum widget size based on how many hexes fit across the board
+        boardWidth = int(self.hexWidth * (controller.side + 0.5))
+        boardHeight = int(self.hexHeight * (controller.side + 0.5))
+        self.setMinimumSize(boardWidth, boardHeight)
 
-        self.selected_piece = None
-        self.hovered_hex = None
+        #Repaint whenever the controller signals that a move has been made
+        self.controller.moveMade.connect(self.update)
+
+        #Mouse tracking must be enabled explicitly for mouseMoveEvent to fire without a button held
         self.setMouseTracking(True)
 
-    # Coordinate transforms
-    def screen_to_board(self, sx, sy):
-        cx = self.width() / 2.0
-        cy = self.height() / 2.0
-        px = sx - cx
-        py = sy - cy
-        angle = math.radians(-30)
-        cos_a = math.cos(angle)
-        sin_a = math.sin(angle)
-        bx = px * cos_a - py * sin_a
-        by = px * sin_a + py * cos_a
-        return bx, by
+
+    def toggleHover(self, enable: bool):
+        #Allows the caller to disable hover highlighting, for example during AI turns
+        self.hoverHighlightEnabled = enable
+        self.hoveredHexCoords = None
+        self.update()
 
 
-    def pixel_to_hex(self, x, y, center_x=0, center_y=0):
-        px = x - center_x
-        py = y - center_y
-        q = (4/3 * px) / self.hex_width
-        r = (py / self.hex_height) - (q / 2)
-        return self.hex_round(q, r)
+    def mouseMoveEvent(self, event):
+        #Update the hovered hex as the mouse moves across the board
 
+        if not self.hoverHighlightEnabled:
+            return
 
-    def hex_to_pixel(self, q, r, center_x=0, center_y=0):
-        x = self.hex_width * (3/4 * q)
-        y = self.hex_height * (r + q / 2)
-        return center_x + x, center_y + y
+        #Convert the mouse position to coordinates relative to the board centre
+        boardCenterX = self.width() // 2
+        boardCenterY = self.height() // 2
 
+        relativeX = event.x() - boardCenterX
+        relativeY = event.y() - boardCenterY
 
-    def hex_round(self, q, r):
-        x = q
-        z = r
-        y = -x - z
-        rx = round(x)
-        ry = round(y)
-        rz = round(z)
-        x_diff = abs(rx - x)
-        y_diff = abs(ry - y)
-        z_diff = abs(rz - z)
-        if x_diff > y_diff and x_diff > z_diff:
-            rx = -ry - rz
-        elif y_diff > z_diff:
-            ry = -rx - rz
+        #The board is drawn rotated 30 degrees so we un-rotate the mouse position
+        #before doing the pixel-to-hex conversion
+        rotationAngle = math.radians(-30)
+
+        rotatedX = (
+            relativeX * math.cos(rotationAngle) - relativeY * math.sin(rotationAngle))
+
+        rotatedY = (
+            relativeX * math.sin(rotationAngle) + relativeY * math.cos(rotationAngle))
+
+        hoveredHexCoords = self.pixelToHex(rotatedX, rotatedY, 0, 0)
+
+        #Only highlight the hex if it is empty - occupied hexes don't get a hover color
+        if self.controller.game_state.board.get(hoveredHexCoords, 0) == 0:
+            if self.hoveredHexCoords != hoveredHexCoords:
+                #Hex has changed, store the new one and repaint
+                self.hoveredHexCoords = hoveredHexCoords
+                self.update()
         else:
-            rz = -rx - ry
-        return (rx, rz)
+            if self.hoveredHexCoords is not None:
+                #Mouse moved onto an occupied hex so clear the highlight
+                self.hoveredHexCoords = None
+                self.update()
 
-    # Painting
+
+    def leaveEvent(self, event):
+        #Clear the hover highlight when the mouse leaves the widget entirely
+        if self.hoveredHexCoords is not None:
+            self.hoveredHexCoords = None
+            self.update()
+
+
+    def mousePressEvent(self, event):
+        #Handle a human player clicking a hex to place a piece
+
+        #Ignore clicks when not in a human-playable mode or when the game has ended
+        if self.controller.mode not in ("human", "ai") or self.controller.game_over:
+            return
+
+        #In AI mode, only accept clicks when it is the human player's turn
+        if (
+            self.controller.mode == "ai"
+            and self.controller.current_player != self.controller.human_player
+        ):
+            return
+
+        #Convert the click position to coordinates relative to the board centre
+        boardCenterX = self.width() // 2
+        boardCenterY = self.height() // 2
+
+        relativeX = event.x() - boardCenterX
+        relativeY = event.y() - boardCenterY
+
+        #Un-rotate the click position to match the un-rotated hex grid
+        rotationAngle = math.radians(-30)
+
+        rotatedX = (
+            relativeX * math.cos(rotationAngle)
+            - relativeY * math.sin(rotationAngle)
+        )
+
+        rotatedY = (
+            relativeX * math.sin(rotationAngle)
+            + relativeY * math.cos(rotationAngle)
+        )
+
+        #Convert the pixel position to axial hex coordinates
+        clickedHexCoords = self.pixelToHex(rotatedX, rotatedY, 0, 0)
+
+        #Pass the chosen hex to the controller to validate and apply the move
+        self.controller.make_human_move(clickedHexCoords)
+
+
+    def reset(self):
+        #Clear the move history display when a new game starts
+        self.recentMoveMessages = []
+
+
+    def addMoveMessage(self, message):
+        #Add a message to the recent move log shown in the corner of the board
+        self.recentMoveMessages.append(message)
+
+        #Keep the log short so it doesn't overflow the board widget
+        if len(self.recentMoveMessages) > 5:
+            self.recentMoveMessages.pop(0)
+
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+
+        #Draw the recent move messages in the top-left corner before applying any transforms
+        painter.setFont(QFont("Arial", 12))
+
+        textOffsetY = 60
+        for message in self.recentMoveMessages:
+            painter.drawText(10, textOffsetY, message)
+            textOffsetY += 20
+
+        #Translate to the centre of the widget so all hex positions are relative to the middle
         painter.translate(self.width() // 2, self.height() // 2)
+
+        #Rotate the entire board 30 degrees so flat-top hexes appear point-top
         painter.rotate(30)
 
-        last_move = None
-        if hasattr(self.controller, "game_state") and getattr(self.controller.game_state, "move_history", None):
-            last_move = self.controller.game_state.move_history[-1] if self.controller.game_state.move_history else None
-        terminal_line = getattr(self.controller, "winning_line", [])
+        #Find the most recent move so it can be marked with a dot
+        lastMoveCoords = (
+            self.controller.game_state.move_history[-1]
+            if self.controller.game_state.move_history
+            else None
+        )
 
-        for (q, r), value in self.controller.game_state.board.items():
-            x, y = self.hex_to_pixel(q, r, 0, 0)
-            is_last = (q, r) == last_move
-            selected = (self.selected_piece == (q, r))
-            self.draw_hex(painter, x, y, value, is_last, selected)
+        #Fetch the winning line if the game has ended with a winner
+        terminalWinningLine = self.controller.game_state.get_winning_line()
 
-        # Darken hovered empty hex
-        if self.hovered_hex and self.hovered_hex in self.controller.game_state.board:
-            value = self.controller.game_state.board.get(self.hovered_hex, 0)
-            if value == 0 or (self.selected_piece and self.is_adjacent(self.selected_piece, self.hovered_hex)):
-                x, y = self.hex_to_pixel(*self.hovered_hex, 0, 0)
-                painter.setBrush(QBrush(QColor(0, 0, 0, 80)))
-                painter.setPen(Qt.NoPen)
-                pts = []
-                for i in range(6):
-                    angle_rad = math.radians(60 * i)
-                    px = x + self.radius * math.cos(angle_rad)
-                    py = y + self.radius * math.sin(angle_rad)
-                    pts.append(QPointF(px, py))
-                painter.drawPolygon(QPolygonF(pts))
+        #Draw every hex on the board using its stored cell value to determine color
+        for (q, r), cellValue in self.controller.game_state.board.items():
+            pixelX, pixelY = self.hexToPixel(q, r, 0, 0)
 
-        # Draw arrow between selected piece and hovered hex
-        if self.selected_piece and self.hovered_hex and self.is_adjacent(self.selected_piece, self.hovered_hex):
-            start_x, start_y = self.hex_to_pixel(*self.selected_piece, 0, 0)
-            end_x, end_y = self.hex_to_pixel(*self.hovered_hex, 0, 0)
-            self.draw_arrow(painter, QPointF(start_x, start_y), QPointF(end_x, end_y))
+            self.drawHex(
+                painter,
+                pixelX,
+                pixelY,
+                cellValue,
+                (q, r) == lastMoveCoords
+            )
 
-        # Draw winning line
-        if getattr(self.controller, "game_over", False) and terminal_line and len(terminal_line) >= 2:
-            pen = QPen(QColor("red"), max(1, self.standardised(4)))
-            pen.setCapStyle(Qt.RoundCap)
-            painter.setPen(pen)
-            points = [QPointF(*self.hex_to_pixel(pos[0], pos[1], 0, 0)) for pos in terminal_line]
-            for i in range(len(points) - 1):
-                painter.drawLine(points[i], points[i + 1])
+        #Draw the winning line on top of the hex grid once the game is over
+        if (
+            self.controller.game_over
+            and terminalWinningLine
+            and len(terminalWinningLine) >= 2
+        ):
+            winningPen = QPen(QColor("red"), 4)
+            winningPen.setCapStyle(Qt.RoundCap)
+            painter.setPen(winningPen)
 
-    def draw_hex(self, painter, x, y, value, is_last_move=False, selected=False):
-        pen = QPen(self.colors.get("border", Qt.black), max(1, self.standardised(1)))
-        painter.setPen(pen)
-        if value == 1:
-            base_color = self.colors.get("player1", QColor("red"))
-        elif value == 2:
-            base_color = self.colors.get("player2", QColor("blue"))
+            #Convert each winning hex to a pixel position then connect them with lines
+            linePoints = []
+
+            for q, r in terminalWinningLine:
+                pointX, pointY = self.hexToPixel(q, r, 0, 0)
+                linePoints.append(QPointF(pointX, pointY))
+
+            for i in range(len(linePoints) - 1):
+                painter.drawLine(linePoints[i], linePoints[i + 1])
+
+
+    def hexToPixel(self, q, r, offsetX, offsetY):
+        #Convert axial hex coordinates to pixel coordinates using standard flat-top hex math
+        pixelX = self.radius * 3 / 2 * q
+        pixelY = self.hexHeight * (r + q / 2)
+
+        return offsetX + pixelX, offsetY + pixelY
+
+
+    def pixelToHex(self, pixelX, pixelY, offsetX, offsetY):
+        #Convert a pixel position back to axial hex coordinates
+        adjustedX = pixelX - offsetX
+        adjustedY = pixelY - offsetY
+
+        #Inverse of the hexToPixel formula
+        q = (2 / 3 * adjustedX) / self.radius
+        r = (
+            (-1 / 3 * adjustedX + math.sqrt(3) / 3 * adjustedY)
+            / self.radius
+        )
+
+        #Round to the nearest valid hex coordinate
+        return self.hexRound(q, r)
+
+
+    def hexRound(self, fractionalQ, fractionalR):
+        #Round fractional axial coordinates to the nearest hex using cube coordinate rounding
+
+        #Convert axial to cube coordinates - the third axis s is derived from q and r
+        fractionalX = fractionalQ
+        fractionalZ = fractionalR
+        fractionalY = -fractionalX - fractionalZ
+
+        #Round all three cube axes independently
+        roundedX = round(fractionalX)
+        roundedY = round(fractionalY)
+        roundedZ = round(fractionalZ)
+
+        #Calculate how much each axis was adjusted by rounding
+        diffX = abs(roundedX - fractionalX)
+        diffY = abs(roundedY - fractionalY)
+        diffZ = abs(roundedZ - fractionalZ)
+
+        #The axis with the largest rounding error is recomputed from the other two
+        #to ensure the cube constraint x + y + z = 0 is preserved
+        if diffX > diffY and diffX > diffZ:
+            roundedX = -roundedY - roundedZ
+        elif diffY > diffZ:
+            roundedY = -roundedX - roundedZ
         else:
-            base_color = self.colors.get("empty", QColor("white"))
-        fill_color = self.colors.get("selected", QColor("green")) if selected else base_color
-        painter.setBrush(QBrush(fill_color))
-        pts = []
+            roundedZ = -roundedX - roundedY
+
+        #Return only the q and r axes since the board uses axial coordinates
+        return roundedX, roundedZ
+
+
+    def drawHex(self, painter, centerX, centerY, cellValue, isLastMove=False):
+        #Draw a single hexagon at the given pixel position with the appropriate color
+
+        #All hex vertices are 60 degrees apart
+        sideAngleDegrees = 60
+
+        #Border color is the same for all hexes
+        painter.setPen(QPen(self.colors.get("border", Qt.black), 2))
+
+        #Choose the fill color based on which player occupies the cell, or hover state if empty
+        if cellValue == 1:
+            painter.setBrush(QBrush(self.colors.get("player1", QColor("red"))))
+
+        elif cellValue == 2:
+            painter.setBrush(QBrush(self.colors.get("player2", QColor("blue"))))
+
+        else:
+            #Cell is empty - show a hover highlight if the mouse is over this hex
+            if (
+                self.hoverHighlightEnabled
+                and self.hoveredHexCoords
+                and (centerX, centerY)
+                == self.hexToPixel(*self.hoveredHexCoords, 0, 0)
+            ):
+                painter.setBrush(
+                    QBrush(self.colors.get("hover", QColor(255, 255, 200, 80)))
+                )
+            else:
+                painter.setBrush(
+                    QBrush(self.colors.get("empty", QColor("white")))
+                )
+
+        #Build the six vertices of the hexagon by stepping around the centre point
+        hexPoints = []
+
         for i in range(6):
-            angle_rad = math.radians(60 * i)
-            px = x + self.radius * math.cos(angle_rad)
-            py = y + self.radius * math.sin(angle_rad)
-            pts.append(QPointF(px, py))
-        painter.drawPolygon(QPolygonF(pts))
-        if is_last_move:
-            circle_radius = self.radius / 4.0
+            sideAngleRadians = math.radians(sideAngleDegrees * i)
+
+            vertexX = centerX + self.radius * math.cos(sideAngleRadians)
+            vertexY = centerY + self.radius * math.sin(sideAngleRadians)
+
+            hexPoints.append(QPointF(vertexX, vertexY))
+
+        painter.drawPolygon(QPolygonF(hexPoints))
+
+        #Draw a small grey dot at the centre of the most recently played hex
+        if isLastMove:
+            markerRadius = self.radius / 4
+
             painter.setBrush(QBrush(QColor("gray")))
             painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPointF(x, y), circle_radius, circle_radius)
 
-    def draw_arrow(self, painter, start_point, end_point):
-        """Draw an arrow from start_point to end_point"""
-        pen = QPen(QColor("black"), max(1, self.standardised(3)))
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(QBrush(QColor("black")))
-        
-        # Calculate line vector
-        line_vec = end_point - start_point
-        length = math.hypot(line_vec.x(), line_vec.y())
-        if length == 0:
-            return
-        
-        # Normalize
-        unit_x = line_vec.x() / length
-        unit_y = line_vec.y() / length
-        
-        # Shorten the line slightly so arrow doesn't overlap hex centers
-        margin = self.radius * 0.3
-        adjusted_start = QPointF(
-            start_point.x() + unit_x * margin,
-            start_point.y() + unit_y * margin
-        )
-        adjusted_end = QPointF(
-            end_point.x() - unit_x * margin,
-            end_point.y() - unit_y * margin
-        )
-        
-        # Draw main line
-        painter.drawLine(adjusted_start, adjusted_end)
-        
-        # Draw arrowhead at the end
-        arrow_size = max(8, int(self.radius * 0.4))
-        perp_x, perp_y = -unit_y, unit_x
-        
-        p1 = adjusted_end
-        p2 = QPointF(
-            adjusted_end.x() - unit_x * arrow_size + perp_x * (arrow_size / 2.0),
-            adjusted_end.y() - unit_y * arrow_size + perp_y * (arrow_size / 2.0)
-        )
-        p3 = QPointF(
-            adjusted_end.x() - unit_x * arrow_size - perp_x * (arrow_size / 2.0),
-            adjusted_end.y() - unit_y * arrow_size - perp_y * (arrow_size / 2.0)
-        )
-        
-        path = QPainterPath()
-        path.moveTo(p1)
-        path.lineTo(p2)
-        path.lineTo(p3)
-        path.closeSubpath()
-        painter.drawPath(path)
-
-    # Interaction
-    def mousePressEvent(self, event):
-        if event.button() != Qt.LeftButton:
-            super().mousePressEvent(event)
-            return
-        bx, by = self.screen_to_board(event.pos().x(), event.pos().y())
-        q, r = self.pixel_to_hex(bx, by, 0, 0)
-        value = self.controller.game_state.board.get((q, r), 0)
-
-        if self.selected_piece is None:
-            if value == self.controller.current_player:
-                self.selected_piece = (q, r)  # select for movement
-            elif value == 0:
-                self.controller.make_human_move((q, r))  # place new piece
-        else:
-            # Attempt move to adjacent empty hex
-            if value == 0 and self.is_adjacent(self.selected_piece, (q, r)):
-                self.controller.make_human_move((q, r), from_pos=self.selected_piece)
-            self.selected_piece = None  # deselect after move
-        self.update()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self.selected_piece:
-            # Get mouse position in board coordinates (after rotation)
-            bx, by = self.screen_to_board(event.pos().x(), event.pos().y())
-            
-            # Get the selected piece position in board coordinates
-            start_x, start_y = self.hex_to_pixel(*self.selected_piece, 0, 0)
-
-            # Mouse vector relative to selected hex (board coords)
-            dx = bx - start_x
-            dy = by - start_y
-
-            # Normalize mouse vector
-            length = math.hypot(dx, dy)
-            if length == 0:
-                self.hovered_hex = None
-                self.update()
-                return
-            dx /= length
-            dy /= length
-
-            # Find neighbor most aligned with mouse direction
-            best_neighbor = None
-            best_cos = -2  # smaller than minimum possible cosine (-1)
-            for dq, dr in [(1, 0), (0, 1), (-1, 1),
-                        (-1, 0), (0, -1), (1, -1)]:
-                neighbor_pos = (self.selected_piece[0] + dq, self.selected_piece[1] + dr)
-                if neighbor_pos not in self.controller.game_state.board:
-                    continue
-                    
-                nx, ny = self.hex_to_pixel(neighbor_pos[0], neighbor_pos[1], 0, 0)
-                vnx = nx - start_x
-                vny = ny - start_y
-
-                # Normalize neighbor vector
-                nlen = math.hypot(vnx, vny)
-                if nlen == 0:
-                    continue
-                vnx /= nlen
-                vny /= nlen
-
-                # Cosine similarity (angle closeness)
-                cos_sim = dx * vnx + dy * vny
-                if cos_sim > best_cos:
-                    best_cos = cos_sim
-                    best_neighbor = neighbor_pos
-
-            # Only accept if reasonably aligned (threshold 0.5)
-            if best_neighbor and best_cos > 0.5:
-                self.hovered_hex = best_neighbor
-            else:
-                self.hovered_hex = None
-        else:
-            # fallback hover for placement
-            bx, by = self.screen_to_board(event.pos().x(), event.pos().y())
-            q, r = self.pixel_to_hex(bx, by, 0, 0)
-            if (q, r) in self.controller.game_state.board:
-                value = self.controller.game_state.board.get((q, r), 0)
-                self.hovered_hex = (q, r) if value == 0 else None
-            else:
-                self.hovered_hex = None
-
-        self.update()
-        super().mouseMoveEvent(event)
+            painter.drawEllipse(
+                QPointF(centerX, centerY),
+                markerRadius,
+                markerRadius
+            )
 
 
-
-    def is_adjacent(self, a, b):
-        aq, ar = a
-        bq, br = b
-        neighbors = [(1, 0), (0, 1), (-1, 1),
-                     (-1, 0), (0, -1), (1, -1)]
-        return (bq - aq, br - ar) in neighbors
-
-    def standardised(self, value):
-        screen = QGuiApplication.primaryScreen()
-        geometry = screen.geometry()
-        return int(value * geometry.height() / 1600)
+    def update(self):
+        #Sync the local winning line cache from the controller then trigger a repaint
+        self.winningLine = getattr(self.controller, "winningLine", [])
+        super().update()

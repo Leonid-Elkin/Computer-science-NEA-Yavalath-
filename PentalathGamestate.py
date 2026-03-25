@@ -1,8 +1,8 @@
-# AI/GameState.py
 import math
 
+
 class GameState:
-    # Class-level directions for axial hex grid
+    #Class-level directions for axial hex grid
     DIRECTIONS = [
         (1, 0), (0, 1), (-1, 1),
         (-1, 0), (0, -1), (1, -1)
@@ -10,39 +10,53 @@ class GameState:
 
     def __init__(self, side=5):
         self.side = side
-        self.board = {}  # {(q, r): player_id}, 0 means empty
+        self.board = {}
         self.move_history = []
 
-        # Initialize hexagonal board coordinates
+        #Populate all valid axial coordinates for a hexagonal board of the given side length
         for q in range(-side + 1, side):
             for r in range(-side + 1, side):
                 if -q - r >= -side + 1 and -q - r <= side - 1:
                     self.board[(q, r)] = 0
 
     def get_valid_moves(self):
+        #Returns all empty cells as legal placement targets
         return [pos for pos, val in self.board.items() if val == 0]
 
     def make_move(self, pos, player):
+        """
+        Places the player's piece at pos, then checks for any newly surrounded groups
+        and removes them. Returns a list of captured positions, or an empty list if the
+        cell was already occupied or the position is invalid.
+        """
         if pos in self.board and self.board[pos] == 0:
             self.board[pos] = player
             self.move_history.append(pos)
 
-            # Track current board before removing captured pieces
-            pre_board = dict(self.board)
+            #Snapshot the board before captures are applied
+            preBoard = dict(self.board)
 
-            # Remove any fully surrounded hexagons after the move
             self.remove_surrounded_hexagons()
 
-            # Captured = pieces that were removed
-            captured = [p for p in pre_board if pre_board[p] != 0 and self.board.get(p, 0) == 0 and p != pos]
+            #Captured = positions that were non-empty before but are now cleared
+            captured = [
+                p for p in preBoard
+                if preBoard[p] != 0 and self.board.get(p, 0) == 0 and p != pos
+            ]
 
-            return captured  # Return list of captured positions
+            return captured
         return []
 
-
     def remove_surrounded_hexagons(self):
+        """
+        Flood-fills each connected group of same-coloured pieces to determine whether
+        the group has any adjacent empty cell (a liberty). Any group with no liberties
+        is fully surrounded and all its members are removed from the board.
+        Cells on the boundary of the hex grid (outside the board dict) are ignored
+        rather than treated as liberties, so edge pieces can be captured.
+        """
         visited = set()
-        groups_to_remove = []
+        groupsToRemove = []
 
         def neighbors(pos):
             q, r = pos
@@ -52,11 +66,12 @@ class GameState:
             if val == 0 or pos in visited:
                 continue
 
-            group_color = val
+            groupColor = val
             group = set()
             stack = [pos]
             surrounded = True
 
+            #BFS to collect the full connected group and check for liberties
             while stack:
                 current = stack.pop()
                 if current in group:
@@ -65,185 +80,209 @@ class GameState:
                 visited.add(current)
 
                 for n in neighbors(current):
-                    n_val = self.board.get(n, None)
-                    if n_val == 0:
-                        # Adjacent empty hex → not surrounded
+                    nVal = self.board.get(n, None)
+                    if nVal == 0:
+                        #Adjacent empty hex - group is not surrounded
                         surrounded = False
-                    elif n_val == group_color and n not in group:
+                    elif nVal == groupColor and n not in group:
                         stack.append(n)
-                    # IMPORTANT CHANGE: 
-                    # If n is None (outside board), do *not* mark as safe anymore.
-                    # Just ignore it.
+                    #None means outside the board - not treated as a liberty
 
             if surrounded:
-                groups_to_remove.append(group)
+                groupsToRemove.append(group)
 
-        for group in groups_to_remove:
+        #Clear all surrounded groups from the board
+        for group in groupsToRemove:
             for pos in group:
                 self.board[pos] = 0
                 if pos in self.move_history:
                     self.move_history.remove(pos)
 
-
-
     def undo_move(self, pos):
+        #Clears the cell and removes it from history, used by the minimax search to backtrack
         if pos in self.move_history:
             self.board[pos] = 0
             self.move_history.remove(pos)
 
     def is_terminal(self):
+        """
+        Checks whether the game has reached an end state.
+        A game ends when the last player forms five in a row (win),
+        or the board is completely full (draw).
+        """
+        #Anti-crash guard for empty history
         if not self.move_history:
             return False
 
-        last_pos = self.move_history[-1]
-        last_player = self.board[last_pos]
+        lastPos = self.move_history[-1]
+        lastPlayer = self.board[lastPos]
 
-        # Win: 5 in a row (Pentalath rule)
-        if self._has_consecutive(last_pos, last_player, 5):
+        #Win: five in a row (Pentalath rule)
+        if self._has_consecutive(lastPos, lastPlayer, 5):
             return True
 
-        # Draw: no empty cells
+        #Draw: no empty cells remain
         if all(val != 0 for val in self.board.values()):
             return True
 
         return False
 
     def _has_consecutive(self, pos, player, length):
+        """
+        Checks whether the given player has a run of at least `length` pieces
+        passing through `pos` in any of the six axial directions.
+        Counts outward from pos in both the positive and negative direction along each axis.
+        """
         q, r = pos
         for dq, dr in self.DIRECTIONS:
             count = 1
-            # Forward direction
+
+            #Extend forward along the direction
             for i in range(1, length):
-                check_pos = (q + dq * i, r + dr * i)
-                if self.board.get(check_pos) == player:
+                checkPos = (q + dq * i, r + dr * i)
+                if self.board.get(checkPos) == player:
                     count += 1
                 else:
                     break
-            # Backward direction
+
+            #Extend backward along the direction
             for i in range(1, length):
-                check_pos = (q - dq * i, r - dr * i)
-                if self.board.get(check_pos) == player:
+                checkPos = (q - dq * i, r - dr * i)
+                if self.board.get(checkPos) == player:
                     count += 1
                 else:
                     break
+
             if count >= length:
                 return True
+
         return False
 
     def evaluate(self, player):
-        opponent = 1 if player == 2 else 2
+        """
+        Heuristic board evaluation from `player`s perspective.
+        Returns a large terminal score for decisive positions, otherwise
+        weights potential line counts for both players to estimate positional strength.
+        """
+        opponent = 3 - player
 
-        # Terminal states high priority:
+        #Return a large terminal score immediately to short-circuit further evaluation
         if self.is_terminal():
-            last_pos = self.move_history[-1]
-            last_player = self.board[last_pos]
+            lastPos = self.move_history[-1]
+            lastPlayer = self.board[lastPos]
 
-            if self._has_consecutive(last_pos, last_player, 4):
-                return 10000 if last_player == player else -10000
+            if self._has_consecutive(lastPos, lastPlayer, 4):
+                return 10000 if lastPlayer == player else -10000
+            if self._has_consecutive(lastPos, lastPlayer, 3):
+                return -10000 if lastPlayer == player else 10000
 
-            if self._has_consecutive(last_pos, last_player, 3):
-                return -10000 if last_player == player else 10000
+        playerFour   = self._count_potential_lines(player, 4)
+        playerThree  = self._count_potential_lines(player, 3)
+        playerTwo    = self._count_potential_lines(player, 2)
+        opponentFour  = self._count_potential_lines(opponent, 4)
+        opponentThree = self._count_potential_lines(opponent, 3)
+        opponentTwo   = self._count_potential_lines(opponent, 2)
 
-        # Evaluate potential lines with different weights:
-        player_four = self._count_potential_lines(player, 4)
-        player_three = self._count_potential_lines(player, 3)
-        player_two = self._count_potential_lines(player, 2)
-
-        opponent_four = self._count_potential_lines(opponent, 4)
-        opponent_three = self._count_potential_lines(opponent, 3)
-        opponent_two = self._count_potential_lines(opponent, 2)
-
-        # Weighting the counts to get heuristic score
-        score = (
-            1000 * player_four + 100 * player_three + 10 * player_two
-            - 1000 * opponent_four - 150 * opponent_three - 20 * opponent_two
+        #Weighting the counts to produce a heuristic score
+        return (
+            1000 * playerFour + 100 * playerThree + 10 * playerTwo
+            - 1000 * opponentFour - 150 * opponentThree - 20 * opponentTwo
         )
 
-        return score
-
     def _count_potential_lines(self, player, length):
+        """
+        Counts unblocked lines of exactly `length` cells containing only this player's
+        pieces or empty cells. Only three of the six directions are iterated to avoid
+        counting each line twice. Already-counted starting positions are tracked in a set.
+        """
         count = 0
-        # Only need 3 directions since opposite directions are checked by moving backward
         checked = set()
+
         for pos in self.board:
             if self.board[pos] != 0 and self.board[pos] != player:
                 continue
 
             for dq, dr in self.DIRECTIONS[:3]:
-                # Avoid double counting lines by tracking starting points and directions
+                #Avoid double counting lines by tracking starting points and directions
                 if (pos, (dq, dr)) in checked:
                     continue
 
                 line = []
                 blocked = False
+
                 for i in range(length):
-                    check_pos = (pos[0] + dq * i, pos[1] + dr * i)
-                    val = self.board.get(check_pos, -1)
+                    checkPos = (pos[0] + dq * i, pos[1] + dr * i)
+                    val = self.board.get(checkPos, -1)
                     if val == -1 or (val != 0 and val != player):
                         blocked = True
                         break
-                    line.append(check_pos)
+                    line.append(checkPos)
 
                 if not blocked and len(line) == length:
                     count += 1
-                    # Mark all positions in this line to avoid double counting in this direction
+                    #Mark all positions in this line to avoid double counting in this direction
                     for p in line:
                         checked.add((p, (dq, dr)))
+
         return count
 
     def get_winner(self):
+        """
+        Returns the winning player id (1 or 2), 0 for a draw,
+        or None if the game is still in progress.
+        """
         if not self.move_history:
-            return None  # Game just started
-        
-        last_pos = self.move_history[-1]
-        last_player = self.board[last_pos]
+            return None
 
-        # Check if last player has 5 in a row => win
-        if self._has_consecutive(last_pos, last_player, 5):
-            return last_player
+        lastPos = self.move_history[-1]
+        lastPlayer = self.board[lastPos]
 
-        # Check draw: no empty spots
+        #Five in a row is a win
+        if self._has_consecutive(lastPos, lastPlayer, 5):
+            return lastPlayer
+
+        #Board full with no decisive line is a draw
         if all(val != 0 for val in self.board.values()):
-            return 0  # Draw
-        
-        return None  # Game ongoing
+            return 0
 
-    # In GameState.py
+        return None
 
     def get_winning_line(self):
-        print("Inited winning position drawer")
+        """
+        Traces back along each direction from the last move to find and return
+        the exact sequence of five cells that forms the decisive run.
+        Returns an empty list if no winning line is found.
+        """
         if not self.move_history:
             return []
 
-        last_pos = self.move_history[-1]
-        last_player = self.board[last_pos]
-        q, r = last_pos
+        lastPos = self.move_history[-1]
+        lastPlayer = self.board[lastPos]
+        q, r = lastPos
 
-        length = 5  # Pentalath winning length
+        #Pentalath winning length is five
+        length = 5
 
         for dq, dr in self.DIRECTIONS:
-            line = [last_pos]
+            line = [lastPos]
 
-            # Forward direction
+            #Extend forward
             for i in range(1, length):
                 pos = (q + dq * i, r + dr * i)
-                if self.board.get(pos) == last_player:
+                if self.board.get(pos) == lastPlayer:
                     line.append(pos)
                 else:
                     break
 
-            # Backward direction
+            #Extend backward
             for i in range(1, length):
                 pos = (q - dq * i, r - dr * i)
-                if self.board.get(pos) == last_player:
+                if self.board.get(pos) == lastPlayer:
                     line.insert(0, pos)
                 else:
                     break
 
             if len(line) >= length:
-                winning_line = line[:length]
-                print(winning_line)
-                return winning_line
+                return line[:length]
 
         return []
-    
